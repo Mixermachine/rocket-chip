@@ -70,7 +70,7 @@ case object PLICKey extends Field[Option[PLICParams]](None)
 class TLPLIC(params: PLICParams, beatBytes: Int)(implicit p: Parameters) extends LazyModule
 {
   // plic0 => max devices 1023
-  val device = new SimpleDevice("interrupt-controller", Seq("riscv,plic0")) {
+  val device: SimpleDevice = new SimpleDevice("interrupt-controller", Seq("riscv,plic0")) {
     override val alwaysExtended = true
     override def describe(resources: ResourceBindings): Description = {
       val Description(name, mapping) = super.describe(resources)
@@ -88,20 +88,21 @@ class TLPLIC(params: PLICParams, beatBytes: Int)(implicit p: Parameters) extends
 
     def getOMPLIC(resourceBindings: ResourceBindings): Seq[OMComponent] = {
       val memRegions : Seq[OMMemoryRegion]= DiplomaticObjectModelAddressing.getOMMemoryRegions("PLIC", resourceBindings, Some(module.omRegMap))
+      val ints = DiplomaticObjectModelAddressing.describeInterrupts(describe(resourceBindings).name, resourceBindings)
+      val Description(name, mapping) = describe(resourceBindings)
 
       Seq[OMComponent](
         OMPLIC(
           memoryRegions = memRegions,
-          interrupts = Nil, // TODO
+          interrupts = ints,
           specifications = List(
             OMSpecification(
-              name = "The RISC‑V Instruction Set Manual, Volume II: Privileged Architecture",
+              name = "The RISC-V Instruction Set Manual, Volume II: Privileged Architecture",
               version = "1.10"
             )
           ),
           latency = 2, // TODO
-          nInterrupts = 3,
-          nPriorities = params.maxPriorities,
+          nPriorities = nPriorities,
           targets = Nil
         )
       )
@@ -251,7 +252,7 @@ class TLPLIC(params: PLICParams, beatBytes: Int)(implicit p: Parameters) extends
     val claimer = Wire(Vec(nHarts, Bool()))
     assert((claimer.asUInt & (claimer.asUInt - UInt(1))) === UInt(0)) // One-Hot
     val claiming = Seq.tabulate(nHarts){i => Mux(claimer(i), maxDevs(i), UInt(0))}.reduceLeft(_|_)
-    val claimedDevs = Vec(UIntToOH(claiming, nDevices+1).toBools)
+    val claimedDevs = Vec(UIntToOH(claiming, nDevices+1).asBools)
 
     ((pending zip gateways) zip claimedDevs.tail) foreach { case ((p, g), c) =>
       g.ready := !p
@@ -269,7 +270,7 @@ class TLPLIC(params: PLICParams, beatBytes: Int)(implicit p: Parameters) extends
     assert((completer.asUInt & (completer.asUInt - UInt(1))) === UInt(0)) // One-Hot
     val completerDev = Wire(UInt(width = log2Up(nDevices + 1)))
     val completedDevs = Mux(completer.reduce(_ || _), UIntToOH(completerDev, nDevices+1), UInt(0))
-    (gateways zip completedDevs.toBools.tail) foreach { case (g, c) =>
+    (gateways zip completedDevs.asBools.tail) foreach { case (g, c) =>
        g.complete := c
     }
 
@@ -353,7 +354,7 @@ class PLICFanIn(nDevices: Int, prioBits: Int) extends Module {
     } else (x.head, UInt(0))
   }
 
-  val effectivePriority = (UInt(1) << prioBits) +: (io.ip.toBools zip io.prio).map { case (p, x) => Cat(p, x) }
+  val effectivePriority = (UInt(1) << prioBits) +: (io.ip.asBools zip io.prio).map { case (p, x) => Cat(p, x) }
   val (maxPri, maxDev) = findMax(effectivePriority)
   io.max := maxPri // strips the always-constant high '1' bit
   io.dev := maxDev
